@@ -2,60 +2,66 @@ import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
-from langchain.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents.stuff import create_stuff_documents_chain
-from langchain.chains.retrieval import create_retrieval_chain
+from langchain.memory import ConversationBufferMemory
+from langchain.agents import Tool, initialize_agent, AgentType
+from langchain.tools import tool
+
+
+# Define a calculator tool
+@tool
+def calculator(expression: str) -> str:
+    """Accurately evaluates math expressions. 
+    Example: '23 * 57' or '(7 + 9) / 2'"""
+    try:
+        result = eval(expression)
+        return str(result)
+    except Exception as e:
+        return f"Error evaluating expression: {e}"
+
 
 def main():
     load_dotenv()
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-    PERSIST_DIR = "persist_chroma"
-    COLLECTION = "pdf_docs"
-
-    embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    # Loaded embeddings + Chroma DB
+    embeddings = OpenAIEmbeddings()
     vectordb = Chroma(
-        collection_name=COLLECTION,
-        persist_directory=PERSIST_DIR,
-        embedding_function=embeddings,
+        persist_directory="./chroma_db",
+        embedding_function=embeddings
     )
-    retriever = vectordb.as_retriever(search_kwargs={"k": 4})
+    retriever = vectordb.as_retriever()
 
-    llm = ChatOpenAI(
-        model_name="gpt-4o-mini",
-        temperature=0,
-        openai_api_key=OPENAI_API_KEY
+    # Wrap retriever as a Tool
+    rag_tool = Tool(
+        name="PDF Retriever",
+        func=lambda q: retriever.get_relevant_documents(q),
+        description="Use this tool to fetch relevant information from the uploaded PDF."
     )
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "You are a helpful assistant that answers questions using the provided context. "
-         "Always be concise and cite relevant sections."),
-        ("human", "Question: {input}\n\nContext:\n{context}")
-    ])
+    # Loaded conversation memory
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-    # Use correct chain constructors
-    doc_chain = create_stuff_documents_chain(llm, prompt)
-    retrieval_chain = create_retrieval_chain(retriever, doc_chain)
+    # Define the LLM
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    chat_history = []
+    # Initialized the Agent with multiple tools
+    tools = [rag_tool, calculator]
+    agent = initialize_agent(
+        tools=tools,
+        llm=llm,
+        agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        memory=memory
+    )
 
-    print("✅ Ready! Ask me about your PDF. (type 'exit' to quit)\n")
+    # Chat loop
+    print("🤖 Agentic RAG Chatbot is ready, Type 'exit' to quit.\n")
+
     while True:
         query = input("You: ")
-        if query.lower() == "exit":
+        if query.lower() in ["exit", "quit"]:
             break
-
-        res = retrieval_chain.invoke({
-            "input": query,
-            "chat_history": chat_history
-        })
-
-        answer = res["answer"]
-        print("Bot:", answer, "\n")
-
-        chat_history.append(("user", query))
-        chat_history.append(("assistant", answer))
+        response = agent.run(query)
+        print("Bot:", response)
 
 
 if __name__ == "__main__":
