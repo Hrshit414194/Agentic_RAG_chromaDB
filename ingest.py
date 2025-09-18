@@ -1,39 +1,68 @@
 import os
-from pathlib import Path
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
+from langchain.memory import ConversationBufferMemory
+from langchain.agents import Tool, initialize_agent, AgentType
+from langchain.tools import tool
 
-# Load .env
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# CONFIG
-PDF_PATH = "Chunking_RAG.pdf" 
-PERSIST_DIR = "persist_chroma"
-COLLECTION = "pdf_docs"
+# Define a calculator tool
+@tool
+def calculator(expression: str) -> str:
+    """Accurately evaluates math expressions. 
+    Example: '23 * 57' or '(7 + 9) / 2'"""
+    try:
+        result = eval(expression)
+        return str(result)
+    except Exception as e:
+        return f"Error evaluating expression: {e}"
+
 
 def main():
-    loader = PyPDFLoader(PDF_PATH)
-    docs = loader.load()
+    load_dotenv()
 
-    # Split into chunks
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.split_documents(docs)
-    print(f"Loaded {len(docs)} pages, split into {len(chunks)} chunks")
-
-    # Embed + store in Chroma
-    embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    # Loaded embeddings + Chroma DB
+    embeddings = OpenAIEmbeddings()
     vectordb = Chroma(
-        collection_name=COLLECTION,
-        persist_directory=PERSIST_DIR,
-        embedding_function=embeddings,
+        persist_directory="./chroma_db",
+        embedding_function=embeddings
+    )
+    retriever = vectordb.as_retriever()
+
+    # Wrap retriever as a Tool
+    rag_tool = Tool(
+        name="PDF Retriever",
+        func=lambda q: retriever.get_relevant_documents(q),
+        description="Use this tool to fetch relevant information from the uploaded PDF."
     )
 
-    vectordb.add_documents(chunks)
-    print("✅ PDF ingested and stored in Chroma")
+    # Loaded conversation memory
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
+    # Define the LLM
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+    # Initialized the Agent with multiple tools
+    tools = [rag_tool, calculator]
+    agent = initialize_agent(
+        tools=tools,
+        llm=llm,
+        agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        memory=memory
+    )
+
+    # Chat loop
+    print("🤖 Agentic RAG Chatbot is ready, Type 'exit' to quit.\n")
+
+    while True:
+        query = input("You: ")
+        if query.lower() in ["exit", "quit"]:
+            break
+        response = agent.run(query)
+        print("Bot:", response)
+
 
 if __name__ == "__main__":
     main()
