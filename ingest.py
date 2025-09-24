@@ -1,39 +1,37 @@
 import os
-from pathlib import Path
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# Load .env
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# CONFIG
-PDF_PATH = "Chunking_RAG.pdf" 
-PERSIST_DIR = "persist_chroma"
-COLLECTION = "pdf_docs"
+def ingest_pdf(pdf_path="Chunking_RAG.pdf", persist_dir="./chroma_db"):
+    """Load a single PDF, split into chunks, and store embeddings in ChromaDB."""
 
-def main():
-    loader = PyPDFLoader(PDF_PATH)
+    if not os.path.exists(pdf_path):
+        print(f"⚠️ PDF file {pdf_path} not found.")
+        return
+
+    load_dotenv()
+    embeddings = OpenAIEmbeddings()
+
+    loader = PyPDFLoader(pdf_path)
     docs = loader.load()
 
-    # Split into chunks
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = splitter.split_documents(docs)
-    print(f"Loaded {len(docs)} pages, split into {len(chunks)} chunks")
 
-    # Embed + store in Chroma
-    embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    # Initialize persistent Chroma
     vectordb = Chroma(
-        collection_name=COLLECTION,
-        persist_directory=PERSIST_DIR,
-        embedding_function=embeddings,
+        persist_directory=persist_dir,
+        embedding_function=embeddings
     )
 
+    # Add documents
     vectordb.add_documents(chunks)
-    print("✅ PDF ingested and stored in Chroma")
+    print(f"✅ Ingested {pdf_path} into ChromaDB with {len(chunks)} chunks.")
+
 
 if __name__ == "__main__":
-    main()
+    ingest_pdf()
