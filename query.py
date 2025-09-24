@@ -9,7 +9,7 @@ from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 
-# --- Config file for persistence ---
+#Config file for persistence 
 CONFIG_FILE = "provider_config.txt"
 
 
@@ -25,7 +25,7 @@ def save_provider(provider: str):
         f.write(provider)
 
 
-# --- Initialize providers ---
+#Initialized providers 
 duckduckgo = DuckDuckGoSearchRun()
 load_dotenv()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
@@ -38,7 +38,7 @@ else:
 SEARCH_PROVIDER = load_provider()
 
 
-# --- Calculator Tool ---
+#Calculator Tool 
 @tool
 def calculator(expression: str) -> str:
     """Safely evaluate math expressions like '23*57' or '(7+9)/2'."""
@@ -51,7 +51,7 @@ def calculator(expression: str) -> str:
         return f"Error: {e}"
 
 
-# --- Safe Web Search Tool ---
+#Safe Web Search Tool 
 @tool
 def safe_web_search(query: str) -> str:
     """Safely search the web for real-time information."""
