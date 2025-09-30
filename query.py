@@ -1,15 +1,16 @@
 import os
 from dotenv import load_dotenv
+from openai import OpenAI
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain.memory import ConversationBufferMemory
 from langchain.agents import Tool, initialize_agent, AgentType
 from langchain.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 
 
-#Config file for persistence 
+# Config file for persistence
 CONFIG_FILE = "provider_config.txt"
 
 
@@ -25,20 +26,43 @@ def save_provider(provider: str):
         f.write(provider)
 
 
-#Initialized providers 
+# Initialize providers
 duckduckgo = DuckDuckGoSearchRun()
 load_dotenv()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if TAVILY_API_KEY:
-    tavily = TavilySearchResults(max_results=5, tavily_api_key=TAVILY_API_KEY)
+    tavily = TavilySearch(max_results=5, api_key=TAVILY_API_KEY)
 else:
     tavily = None
 
 SEARCH_PROVIDER = load_provider()
 
+# Initialize OpenAI client for moderation
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-#Calculator Tool 
+
+def is_safe_prompt(prompt: str) -> (bool, str):
+    """
+    Uses OpenAI Moderation API to check if a prompt is safe.
+    Returns (is_safe, warning_message).
+    """
+    try:
+        response = client.moderations.create(
+            model="omni-moderation-latest",
+            input=prompt
+        )
+        result = response.results[0]
+        if result.flagged:
+            return False, "⚠️ Your query may contain unsafe or illegal content. Please rephrase and try again."
+        return True, ""
+    except Exception as e:
+        # Fallback: treat as safe if moderation API fails
+        return True, f"⚠️ Moderation check failed: {e}"
+
+
+# Calculator Tool
 @tool
 def calculator(expression: str) -> str:
     """Safely evaluate math expressions like '23*57' or '(7+9)/2'."""
@@ -51,16 +75,12 @@ def calculator(expression: str) -> str:
         return f"Error: {e}"
 
 
-#Safe Web Search Tool 
+# Web Search Tool (still wrapped with guardrails for safety) 
 @tool
 def safe_web_search(query: str) -> str:
     """Safely search the web for real-time information."""
 
     global SEARCH_PROVIDER
-    blocked = ["hack", "illegal", "nsfw", "bomb", "weapon"]
-    if any(b in query.lower() for b in blocked):
-        return "❌ This query is blocked for safety reasons."
-
     if len(query) > 200:
         return "❌ Query too long, please shorten it."
 
@@ -96,7 +116,7 @@ def main():
         embedding_function=embeddings
     )
 
-    # Check if database has documents
+    # Warn if DB empty
     if vectordb._collection.count() == 0:
         print("⚠️ No documents found in ChromaDB.")
         print("👉 Run `python ingest.py` first to ingest Chunking_RAG.pdf.\n")
@@ -122,7 +142,7 @@ def main():
         memory=memory
     )
 
-    print("🤖 Agentic RAG Chatbot is ready. Type 'exit' to quit.")
+    print("🤖 Agentic RAG Chatbot with Moderation is ready. Type 'exit' to quit.")
     print("💡 Commands: 'switch to tavily', 'switch to duckduckgo', 'current provider'\n")
 
     while True:
@@ -135,6 +155,13 @@ def main():
         if query.lower() in ["exit", "quit"]:
             break
 
+        # Moderation check BEFORE agent
+        safe, warning = is_safe_prompt(query)
+        if not safe:
+            print(f"Bot: {warning}")
+            continue
+
+        # Commands
         if query.lower() == "switch to tavily":
             SEARCH_PROVIDER = "tavily"
             save_provider(SEARCH_PROVIDER)
@@ -149,6 +176,7 @@ def main():
             print(f"🔎 Current search provider: {SEARCH_PROVIDER}\n")
             continue
 
+        # Run agent
         response = agent.run(query)
         print("Bot:", response)
 
